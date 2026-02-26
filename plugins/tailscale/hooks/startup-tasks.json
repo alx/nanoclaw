@@ -1,0 +1,11 @@
+[
+  {
+    "id": "tailscale-key-rotation-7d",
+    "group_folder": "main",
+    "prompt_template": "Reminder: The Tailscale auth key configured on {{today}} is due for rotation today. Tell the user to generate a new key at https://login.tailscale.com/admin/settings/keys, update TAILSCALE_AUTH_KEY in .env, and restart the service with: systemctl --user restart nanoclaw.service",
+    "schedule_type": "once",
+    "schedule_value": "+7d",
+    "context_mode": "isolated",
+    "requireEnv": ["TAILSCALE_AUTH_KEY"]
+  }
+]

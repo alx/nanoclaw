@@ -18,6 +18,7 @@ import {
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { getPluginEnvVars } from './plugin-loader.js';
 import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
@@ -144,6 +145,22 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Sync plugin skills into each group's .claude/skills/
+  for (const pluginsDir of ['plugins', '.nanoclaw/plugins']) {
+    const baseDir = path.join(process.cwd(), pluginsDir);
+    if (!fs.existsSync(baseDir)) continue;
+    for (const pluginName of fs.readdirSync(baseDir)) {
+      const pluginSkillsSrc = path.join(baseDir, pluginName, 'skills');
+      if (!fs.existsSync(pluginSkillsSrc)) continue;
+      for (const skillDir of fs.readdirSync(pluginSkillsSrc)) {
+        const src = path.join(pluginSkillsSrc, skillDir);
+        if (!fs.statSync(src).isDirectory()) continue;
+        fs.cpSync(src, path.join(skillsDst, skillDir), { recursive: true });
+      }
+    }
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -196,6 +213,13 @@ function buildVolumeMounts(
     mounts.push(...validatedMounts);
   }
 
+  // Mount plugin directories read-only so entrypoint-steps.sh can be sourced
+  for (const dir of ['plugins', '.nanoclaw/plugins']) {
+    const abs = path.join(process.cwd(), dir);
+    if (fs.existsSync(abs))
+      mounts.push({ hostPath: abs, containerPath: `/workspace/${dir}`, readonly: true });
+  }
+
   return mounts;
 }
 
@@ -224,6 +248,11 @@ function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  }
+
+  // Inject env vars declared by plugins (e.g. TAILSCALE_AUTH_KEY)
+  for (const [k, v] of Object.entries(getPluginEnvVars())) {
+    args.push('-e', `${k}=${v}`);
   }
 
   for (const mount of mounts) {

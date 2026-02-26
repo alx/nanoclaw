@@ -29,7 +29,8 @@ groups/global/*
 .idea/
 .vscode/
 
-# Skills system (local per-installation state)
+# User-local state and plugins (never conflict with upstream)
+# .nanoclaw/plugins/ is the user-local plugin dir; bundled plugins/ stays tracked
 .nanoclaw/
 
 agents-sdk-docs

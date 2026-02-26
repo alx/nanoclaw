@@ -20,6 +20,7 @@ import {
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
 import {
+  createTask,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -27,6 +28,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getTaskById,
   initDatabase,
   setRegisteredGroup,
   setRouterState,
@@ -34,6 +36,7 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { getPluginStartupTasks } from './plugin-loader.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -445,10 +448,43 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+function seedPluginTasks(): void {
+  const tasks = getPluginStartupTasks();
+  if (!tasks.length) return;
+
+  // getAllRegisteredGroups returns Record<jid, RegisteredGroup>
+  const groups = getAllRegisteredGroups();
+  const jidByFolder = new Map(
+    Object.entries(groups).map(([jid, g]) => [g.folder, jid]),
+  );
+
+  for (const task of tasks) {
+    if (getTaskById(task.id)) continue; // already seeded — idempotent
+
+    const chatJid = jidByFolder.get(task.group_folder);
+    if (!chatJid) continue; // group not registered yet — skip silently
+
+    createTask({
+      id: task.id,
+      group_folder: task.group_folder,
+      chat_jid: chatJid,
+      prompt: task.prompt,
+      schedule_type: task.schedule_type as 'cron' | 'interval' | 'once',
+      schedule_value: task.schedule_value,
+      context_mode: task.context_mode as 'group' | 'isolated',
+      next_run: task.schedule_value,
+      status: 'active',
+      created_at: new Date().toISOString(),
+    });
+    logger.info({ taskId: task.id }, 'Plugin startup task seeded');
+  }
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
+  seedPluginTasks();
   loadState();
 
   // Graceful shutdown handlers
