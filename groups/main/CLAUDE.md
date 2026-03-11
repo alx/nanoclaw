@@ -238,6 +238,19 @@ You can read and write to `/workspace/project/groups/global/CLAUDE.md` for facts
 
 ---
 
+## Local Models (llama-swap)
+
+You have access to local AI models via llama-swap MCP tools:
+
+- `mcp__llama_swap__llama_swap_list_models` — list all available local models
+- `mcp__llama_swap__llama_swap_chat` — chat with a local model (requires `model` param)
+- `mcp__llama_swap__llama_swap_image` — generate images with stable diffusion models (requires `model` param)
+
+Use these for: cheaper/faster tasks, image generation, tasks where local inference is preferred.
+Always call `list_models` first if unsure which model to use.
+
+---
+
 ## Scheduling for Other Groups
 
 When scheduling tasks for other groups, use the `target_group_jid` parameter with the group's JID from `registered_groups.json`:
