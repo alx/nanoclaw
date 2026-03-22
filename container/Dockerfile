@@ -24,7 +24,12 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    python3 \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv (Python package runner) system-wide for Python-based skills
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -59,6 +64,10 @@ RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
+
+# UV cache dir — must be writable by node user
+ENV UV_CACHE_DIR=/home/node/.cache/uv
+RUN mkdir -p /home/node/.cache/uv && chown -R node:node /home/node/.cache
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
