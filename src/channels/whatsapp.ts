@@ -6,11 +6,13 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   WASocket,
+  downloadMediaMessage,
   fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
+import { isVoiceMessage, transcribeAudioMessage } from '../transcription.js';
 
 import {
   ASSISTANT_HAS_OWN_NUMBER,
@@ -45,6 +47,7 @@ export class WhatsAppChannel implements Channel {
   private flushing = false;
   private groupSyncTimerStarted = false;
 
+  private sentVoiceNoteIds = new Set<string>();
   private opts: WhatsAppChannelOpts;
 
   constructor(opts: WhatsAppChannelOpts) {
@@ -210,8 +213,15 @@ export class WhatsAppChannel implements Channel {
               normalized.videoMessage?.caption ||
               '';
 
-            // Skip protocol messages with no text content (encryption keys, read receipts, etc.)
-            if (!content) continue;
+            // Allow voice messages through even without text content
+            if (!content && !isVoiceMessage(msg)) continue;
+
+            // Skip voice notes sent by the bot itself — Baileys echoes sent messages back
+            const msgId = msg.key.id || '';
+            if (isVoiceMessage(msg) && this.sentVoiceNoteIds.has(msgId)) {
+              this.sentVoiceNoteIds.delete(msgId);
+              continue;
+            }
 
             const sender = msg.key.participant || msg.key.remoteJid || '';
             const senderName = msg.pushName || sender.split('@')[0];
@@ -225,12 +235,32 @@ export class WhatsAppChannel implements Channel {
               ? fromMe
               : content.startsWith(`${ASSISTANT_NAME}:`);
 
+            // Transcribe voice messages before storing
+            let finalContent = content;
+            if (isVoiceMessage(msg)) {
+              try {
+                const transcript = await transcribeAudioMessage(msg, this.sock);
+                if (transcript) {
+                  finalContent = `[Voice: ${transcript}]`;
+                  logger.info(
+                    { chatJid, length: transcript.length, transcript },
+                    'Transcribed voice message',
+                  );
+                } else {
+                  finalContent = '[Voice Message - transcription unavailable]';
+                }
+              } catch (err) {
+                logger.error({ err }, 'Voice transcription error');
+                finalContent = '[Voice Message - transcription failed]';
+              }
+            }
+
             this.opts.onMessage(chatJid, {
               id: msg.key.id || '',
               chat_jid: chatJid,
               sender,
               sender_name: senderName,
-              content,
+              content: finalContent,
               timestamp,
               is_from_me: fromMe,
               is_bot_message: isBotMessage,
@@ -274,6 +304,20 @@ export class WhatsAppChannel implements Channel {
         'Failed to send, message queued',
       );
     }
+  }
+
+  async sendVoiceNote(jid: string, audio: Buffer): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid }, 'WA disconnected, dropping voice note');
+      return;
+    }
+    const sent = await this.sock.sendMessage(jid, {
+      audio,
+      ptt: true,
+      mimetype: 'audio/ogg; codecs=opus',
+    });
+    if (sent?.key.id) this.sentVoiceNoteIds.add(sent.key.id);
+    logger.info({ jid }, 'Voice note sent');
   }
 
   isConnected(): boolean {

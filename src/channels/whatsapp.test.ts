@@ -40,9 +40,18 @@ vi.mock('fs', async () => {
   };
 });
 
-// Mock child_process (used for osascript notification)
+// Mock child_process (used for osascript notification and transcription)
 vi.mock('child_process', () => ({
   exec: vi.fn(),
+  execFile: vi.fn(),
+}));
+
+// Mock transcription module so voice message tests don't require whisper-cli
+vi.mock('../transcription.js', () => ({
+  isVoiceMessage: vi.fn(() => false),
+  transcribeAudioMessage: vi.fn(
+    async () => '[Voice Message - transcription unavailable]',
+  ),
 }));
 
 // Build a fake WASocket that's an EventEmitter with the methods we need
