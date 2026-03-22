@@ -67,6 +67,9 @@ export const TRIGGER_PATTERN = new RegExp(
   'i',
 );
 
+export const ACK_ENABLED = process.env.ACK_ENABLED !== 'false';
+export const ACK_MESSAGE = process.env.ACK_MESSAGE || '👌';
+
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =
