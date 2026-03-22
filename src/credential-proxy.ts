@@ -13,9 +13,27 @@
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+/**
+ * Read the OAuth access token from ~/.claude/.credentials.json (Claude CLI store).
+ * Returns undefined if the file doesn't exist or lacks a token.
+ */
+function readClaudeCliToken(): string | undefined {
+  try {
+    const credFile = path.join(os.homedir(), '.claude', '.credentials.json');
+    const raw = fs.readFileSync(credFile, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed?.claudeAiOauth?.accessToken || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -35,8 +53,6 @@ export function startCredentialProxy(
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -72,6 +88,17 @@ export function startCredentialProxy(
           // (exchange request + auth probes). Post-exchange requests use
           // x-api-key only, so they pass through without token injection.
           if (headers['authorization']) {
+            // Read token fresh on each request so `claude setup-token` refreshes
+            // are picked up without restarting. Fall back to ~/.claude/.credentials.json
+            // (Claude CLI store) when not set in .env.
+            const freshSecrets = readEnvFile([
+              'CLAUDE_CODE_OAUTH_TOKEN',
+              'ANTHROPIC_AUTH_TOKEN',
+            ]);
+            const oauthToken =
+              freshSecrets.CLAUDE_CODE_OAUTH_TOKEN ||
+              freshSecrets.ANTHROPIC_AUTH_TOKEN ||
+              readClaudeCliToken();
             delete headers['authorization'];
             if (oauthToken) {
               headers['authorization'] = `Bearer ${oauthToken}`;
@@ -79,33 +106,60 @@ export function startCredentialProxy(
           }
         }
 
-        const upstream = makeRequest(
-          {
-            hostname: upstreamUrl.hostname,
-            port: upstreamUrl.port || (isHttps ? 443 : 80),
-            path: req.url,
-            method: req.method,
-            headers,
-          } as RequestOptions,
-          (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
-          },
-        );
+        const MAX_ATTEMPTS = 3;
+        const RETRY_DELAY_MS = 100;
 
-        upstream.on('error', (err) => {
-          logger.error(
-            { err, url: req.url },
-            'Credential proxy upstream error',
+        const makeUpstreamRequest = (attempt: number) => {
+          const upstream = makeRequest(
+            {
+              hostname: upstreamUrl.hostname,
+              port: upstreamUrl.port || (isHttps ? 443 : 80),
+              path: req.url,
+              method: req.method,
+              headers,
+              // Always use a fresh socket to avoid stale keep-alive connections
+              agent: false,
+            } as RequestOptions,
+            (upRes) => {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            },
           );
-          if (!res.headersSent) {
-            res.writeHead(502);
-            res.end('Bad Gateway');
-          }
-        });
 
-        upstream.write(body);
-        upstream.end();
+          upstream.setTimeout(30_000, () => upstream.destroy());
+
+          upstream.on('error', (err: NodeJS.ErrnoException) => {
+            const isTransient = [
+              'ECONNRESET',
+              'ETIMEDOUT',
+              'ECONNREFUSED',
+            ].includes(err.code ?? '');
+            if (isTransient && attempt < MAX_ATTEMPTS && !res.headersSent) {
+              logger.warn(
+                { url: req.url, attempt },
+                'Credential proxy transient error, retrying',
+              );
+              setTimeout(
+                () => makeUpstreamRequest(attempt + 1),
+                RETRY_DELAY_MS * attempt,
+              );
+              return;
+            }
+            logger.error(
+              { err, url: req.url },
+              'Credential proxy upstream error',
+            );
+            if (!res.headersSent) {
+              res.writeHead(502);
+              res.end('Bad Gateway');
+            }
+          });
+
+          upstream.write(body);
+          upstream.end();
+        };
+
+        makeUpstreamRequest(1);
       });
     });
 
@@ -122,4 +176,17 @@ export function startCredentialProxy(
 export function detectAuthMode(): AuthMode {
   const secrets = readEnvFile(['ANTHROPIC_API_KEY']);
   return secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
+}
+
+/** Check whether a valid OAuth token is available (env or CLI credentials). */
+export function hasOAuthToken(): boolean {
+  const secrets = readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_AUTH_TOKEN',
+  ]);
+  return !!(
+    secrets.CLAUDE_CODE_OAUTH_TOKEN ||
+    secrets.ANTHROPIC_AUTH_TOKEN ||
+    readClaudeCliToken()
+  );
 }
