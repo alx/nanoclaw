@@ -262,6 +262,23 @@ async function buildContainerArgs(
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
+  // Inject GitHub credentials as env vars so git and gh CLI work inside the container.
+  // OneCLI injects the GitHub token as an HTTP header for api.github.com API calls,
+  // but git push / gh CLI need the raw token as GH_TOKEN / GITHUB_TOKEN env vars.
+  // Dual storage is intentional: .env covers CLI tools, OneCLI covers API calls.
+  const ghEnv = readEnvFile(['GITHUB_TOKEN', 'GITHUB_USER', 'GEMINI_API_KEY']);
+  if (ghEnv.GITHUB_TOKEN) {
+    args.push('-e', `GH_TOKEN=${ghEnv.GITHUB_TOKEN}`);
+    args.push('-e', `GITHUB_TOKEN=${ghEnv.GITHUB_TOKEN}`);
+  }
+  if (ghEnv.GITHUB_USER) {
+    args.push('-e', `GITHUB_USER=${ghEnv.GITHUB_USER}`);
+  }
+  if (ghEnv.GEMINI_API_KEY) {
+    args.push('-e', `GEMINI_API_KEY=${ghEnv.GEMINI_API_KEY}`);
+    args.push('-e', `GOOGLE_AI_API_KEY=${ghEnv.GEMINI_API_KEY}`);
+  }
+
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).
@@ -270,15 +287,6 @@ async function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
-  }
-
-  const ghEnv = readEnvFile(['GITHUB_TOKEN', 'GITHUB_USER']);
-  if (ghEnv.GITHUB_TOKEN) {
-    args.push('-e', `GH_TOKEN=${ghEnv.GITHUB_TOKEN}`);
-    args.push('-e', `GITHUB_TOKEN=${ghEnv.GITHUB_TOKEN}`);
-  }
-  if (ghEnv.GITHUB_USER) {
-    args.push('-e', `GITHUB_USER=${ghEnv.GITHUB_USER}`);
   }
 
   for (const mount of mounts) {

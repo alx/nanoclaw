@@ -532,11 +532,34 @@ async function runQuery(
     },
   })) {
     messageCount++;
-    const msgType =
-      message.type === 'system'
-        ? `system/${(message as { subtype?: string }).subtype}`
-        : message.type;
-    log(`[msg #${messageCount}] type=${msgType}`);
+    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
+    let msgDetail = '';
+    if (message.type === 'assistant') {
+      const content = (message as { message?: { content?: unknown[] } }).message?.content;
+      if (Array.isArray(content)) {
+        const toolUses = content.filter((b: unknown) => (b as { type?: string }).type === 'tool_use');
+        const textBlocks = content.filter((b: unknown) => (b as { type?: string }).type === 'text');
+        if (toolUses.length > 0) {
+          msgDetail = ` tools=[${toolUses.map((b: unknown) => (b as { name?: string }).name).join(',')}]`;
+        } else if (textBlocks.length > 0) {
+          const text = (textBlocks[0] as { text?: string }).text || '';
+          msgDetail = ` text=${JSON.stringify(text.slice(0, 120))}`;
+        }
+      }
+    } else if (message.type === 'user') {
+      const content = (message as { message?: { content?: unknown[] } }).message?.content;
+      if (Array.isArray(content)) {
+        const toolResults = content.filter((b: unknown) => (b as { type?: string }).type === 'tool_result');
+        if (toolResults.length > 0) {
+          msgDetail = ` tool_results=[${toolResults.map((b: unknown) => {
+            const r = b as { tool_use_id?: string; content?: unknown };
+            const preview = typeof r.content === 'string' ? r.content.slice(0, 80) : JSON.stringify(r.content).slice(0, 80);
+            return `${r.tool_use_id?.slice(-6)}:${JSON.stringify(preview)}`;
+          }).join(', ')}]`;
+        }
+      }
+    }
+    log(`[msg #${messageCount}] type=${msgType}${msgDetail}`);
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;

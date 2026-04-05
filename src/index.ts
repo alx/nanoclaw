@@ -242,9 +242,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (missedMessages.length === 0) return true;
 
   // Voice messages bypass the text trigger requirement
-  const hasVoice = missedMessages.some((m) =>
-    m.content.startsWith('[Voice:'),
-  );
+  const hasVoice = missedMessages.some((m) => m.content.startsWith('[Voice:'));
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {

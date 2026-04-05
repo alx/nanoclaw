@@ -91,6 +91,24 @@ Main has read-only access to the project, read-write access to the store (SQLite
 | `/workspace/project/store` | `store/` | read-write |
 | `/workspace/group` | `groups/main/` | read-write |
 
+### Extra mounts (other groups)
+
+| Container Path | Group | Notes |
+|----------------|-------|-------|
+| `/workspace/extra/3615samui/` | whatsapp_scraping-samui | Hugo site, read/write |
+| `/workspace/extra/reddit-painpoints/` | whatsapp_scraping-samui | Reddit scanner data |
+
+## Git push for extra repos
+
+`GITHUB_TOKEN` is available as an env var. To push to any extra repo:
+
+```bash
+cd /workspace/extra/3615samui
+git remote set-url --push origin https://alx:$GITHUB_TOKEN@github.com/alx/3615samui.git
+git push
+git remote set-url --push origin https://github.com/alx/3615samui.git
+```
+
 Key paths inside the container:
 - `/workspace/project/store/messages.db` - SQLite database (read-write)
 - `/workspace/project/store/messages.db` (registered_groups table) - Group config
