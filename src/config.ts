@@ -95,3 +95,6 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+export const ACK_ENABLED = process.env.ACK_ENABLED !== 'false';
+export const ACK_MESSAGE = process.env.ACK_MESSAGE || '👌';

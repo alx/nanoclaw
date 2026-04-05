@@ -65,6 +65,7 @@ import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { parseImageReferences } from './image.js';
+import { ACK_ENABLED, ACK_MESSAGE } from './config.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -240,6 +241,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Voice messages bypass the text trigger requirement
+  const hasVoice = missedMessages.some((m) =>
+    m.content.startsWith('[Voice:'),
+  );
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
@@ -249,7 +255,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         triggerPattern.test(m.content.trim()) &&
         (m.is_from_me || isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
     );
-    if (!hasTrigger) return true;
+    if (!hasVoice && !hasTrigger) return true;
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -285,32 +291,63 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, imageAttachments, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+  // If the last message is a voice note, buffer text output and synthesize TTS at the end
+  const lastMessage = missedMessages[missedMessages.length - 1];
+  const hasVoiceTrigger = !!lastMessage?.content.startsWith('[Voice:');
+  const voiceChunks: string[] = [];
+
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    imageAttachments,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+        if (text) {
+          if (hasVoiceTrigger) {
+            voiceChunks.push(text); // buffer — send as one voice note at the end
+          } else {
+            await channel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+        if (hasVoiceTrigger && voiceChunks.length > 0) {
+          const fullText = voiceChunks.splice(0).join('\n\n');
+          outputSentToUser = true;
+          await channel.sendMessage(chatJid, fullText);
+          if ('sendVoiceNote' in channel) {
+            (async () => {
+              try {
+                const { textToSpeechOgg } = await import('./tts.js');
+                const oggBuffer = await textToSpeechOgg(fullText);
+                await (channel as any).sendVoiceNote(chatJid, oggBuffer);
+              } catch (err) {
+                logger.warn({ err, group: group.name }, 'TTS failed');
+              }
+            })();
+          }
+        }
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -494,6 +531,10 @@ async function startMessageLoop(): Promise<void> {
           // For non-main groups, only act on trigger messages.
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
+          // Voice messages bypass the text trigger requirement.
+          const hasVoiceMsg = groupMessages.some((m) =>
+            m.content.startsWith('[Voice:'),
+          );
           if (needsTrigger) {
             const triggerPattern = getTriggerPattern(group.trigger);
             const allowlistCfg = loadSenderAllowlist();
@@ -503,7 +544,15 @@ async function startMessageLoop(): Promise<void> {
                 (m.is_from_me ||
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
-            if (!hasTrigger) continue;
+            if (!hasVoiceMsg && !hasTrigger) continue;
+          }
+
+          if (ACK_ENABLED) {
+            channel
+              .sendMessage(chatJid, ACK_MESSAGE)
+              .catch((err) =>
+                logger.warn({ chatJid, err }, 'Failed to send ack message'),
+              );
           }
 
           // Pull all messages since lastAgentTimestamp so non-trigger

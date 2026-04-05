@@ -17,6 +17,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
@@ -269,6 +270,15 @@ async function buildContainerArgs(
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
     args.push('--user', `${hostUid}:${hostGid}`);
     args.push('-e', 'HOME=/home/node');
+  }
+
+  const ghEnv = readEnvFile(['GITHUB_TOKEN', 'GITHUB_USER']);
+  if (ghEnv.GITHUB_TOKEN) {
+    args.push('-e', `GH_TOKEN=${ghEnv.GITHUB_TOKEN}`);
+    args.push('-e', `GITHUB_TOKEN=${ghEnv.GITHUB_TOKEN}`);
+  }
+  if (ghEnv.GITHUB_USER) {
+    args.push('-e', `GITHUB_USER=${ghEnv.GITHUB_USER}`);
   }
 
   for (const mount of mounts) {
