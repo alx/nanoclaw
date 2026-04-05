@@ -1,11 +1,13 @@
 # NanoClaw Migration Guide
 
 Generated: 2026-04-05
+Last upgrade: 2026-04-05
 Base: 391b729623d9de6838960561f4b54eaa02746a42 (= upstream/main HEAD at generation)
 HEAD at generation: 73c8f294bc7baa9f3d0548b1fa43dc4bf4b22528
+HEAD after upgrade: e8bb06b2a0ef53774430e15b92678579e876a785
 Upstream: 391b729623d9de6838960561f4b54eaa02746a42
 
-> **Stash note:** At guide generation time, `stash@{0}` ("pre-migration stash") holds uncommitted
+> **Stash note:** `stash@{0}` ("pre-migration stash") still holds uncommitted
 > customizations for: GitHub CLI in Dockerfile, GEMINI_API_KEY injection, enhanced agent logging,
 > and groups/main/CLAUDE.md extra-mounts docs. Pop the stash after upgrade to restore these.
 
